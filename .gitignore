@@ -1,0 +1,6 @@
+.DS_Store
+.vagrant
+output
+packer_cache
+.python_version
+Vagrantfile
