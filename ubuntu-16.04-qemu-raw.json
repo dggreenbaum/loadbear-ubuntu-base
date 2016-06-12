@@ -38,7 +38,6 @@
       "boot_wait": "10s",
       "disk_size": 2048,
       "format": "raw",
-      "guest_os_type": "Ubuntu_64",
       "http_directory": "http",
       "iso_checksum": "23e97cd5d4145d4105fbf29878534049",
       "iso_checksum_type": "md5",
