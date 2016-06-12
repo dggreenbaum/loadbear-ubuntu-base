@@ -2,5 +2,5 @@
 .vagrant
 output
 packer_cache
-.python_version
+.python-version
 Vagrantfile
