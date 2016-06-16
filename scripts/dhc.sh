@@ -1,4 +1,4 @@
-/bin/echo "cloud-init cloud-init/datasources string ConfigDrive" | /usr/bin/debconf-set-selections        
+/bin/echo "cloud-init cloud-init/datasources string ConfigDrive" | /usr/bin/debconf-set-selections
 #/usr/sbin/useradd -s /bin/bash -m dhc-user
 #echo "dhc-user ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers.d/dhc-user
 #chmod 440 /etc/sudoers.d/dhc-user
@@ -119,6 +119,9 @@ nameserver 8.8.8.8
 nameserver 8.8.4.4
 search nodes.dreamcompute.net
 EOF
+
+# Don't wait so long for network devices to come up
+sed -i '/TimeoutStartSec/c\TimeoutStartSec=10sec' /etc/systemd/system/network-online.target.wants/networking.service
 
 ## Explicitly mounting the config drive seems to work around a bug in mountall
 #mkdir /mnt/config-2
