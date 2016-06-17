@@ -2,6 +2,10 @@
 #/usr/sbin/useradd -s /bin/bash -m dhc-user
 #echo "dhc-user ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers.d/dhc-user
 #chmod 440 /etc/sudoers.d/dhc-user
+
+# Don't wait so long for network devices to come up
+sed -i '/TimeoutStartSec/c\TimeoutStartSec=10sec' /etc/systemd/system/network-online.target.wants/networking.service
+
 /usr/bin/apt-get -y install cloud-init cloud-initramfs-rescuevol cloud-initramfs-growroot python-setuptools
 rm /etc/network/if-up.d/ntpdate
 rm /etc/default/grub
@@ -11,7 +15,7 @@ GRUB_HIDDEN_TIMEOUT=0
 GRUB_HIDDEN_TIMEOUT_QUIET=true
 GRUB_TIMEOUT=0
 GRUB_DISTRIBUTOR=Debian
-GRUB_CMDLINE_LINUX_DEFAULT="console=ttyS0 rootwait"
+GRUB_CMDLINE_LINUX_DEFAULT="console=tty1 console=ttyS0,115200n8"
 GRUB_CMDLINE_LINUX=""
 GRUB_RECORDFAIL_TIMEOUT=0
 
@@ -109,7 +113,6 @@ cat >> /etc/cloud/cloud.cfg.d/99_cleanup.cfg << EOF
 
 runcmd:
  - [ /bin/sed, -i, '/\/tmp\/.*. vfat .*./d', /etc/mtab ]
- - [ /usr/sbin/userdel, -r, installer ]
  - [ /bin/rm, -f, /etc/cloud/cloud.cfg.d/99_cleanup.cfg]
 
 EOF
@@ -119,9 +122,6 @@ nameserver 8.8.8.8
 nameserver 8.8.4.4
 search nodes.dreamcompute.net
 EOF
-
-# Don't wait so long for network devices to come up
-sed -i '/TimeoutStartSec/c\TimeoutStartSec=10sec' /etc/systemd/system/network-online.target.wants/networking.service
 
 ## Explicitly mounting the config drive seems to work around a bug in mountall
 #mkdir /mnt/config-2
