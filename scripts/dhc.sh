@@ -19,6 +19,9 @@ EOF
 
 cp /etc/cloud/templates/hosts.debian.tmpl /etc/cloud/templates/hosts.ubuntu.tmpl
 
+# Reduce DHCP timeout
+sed -i '/timeout 300;/c\timeout 10;' /etc/dhcp/dhclient.conf
+
 ########## BEGIN CLOUD INIT CFG ##########
 cat > /etc/cloud/cloud.cfg << EOF
 # The top level settings are used as module
@@ -79,10 +82,6 @@ cloud_config_modules:
  - fan
  - landscape
  - timezone
- - puppet
- - chef
- - salt-minion
- - mcollective
  - disable-ec2-metadata
  - runcmd
  - byobu
@@ -210,13 +209,6 @@ output: {all: '| tee -a /var/log/cloud-init-output.log'}
 
 EOF
 ########## END CLOUD INIT LOGGING ##########
-
-########## BEGIN CLOUD INIT DPKG ##########
-cat >> /etc/cloud/cloud.cfg.d/90_dpkg.cfg << EOF
-# to update this file, run dpkg-reconfigure cloud-init
-datasource_list: [ NoCloud, ConfigDrive, OpenNebula, Azure, AltCloud, OVF, MAAS, GCE, OpenStack, CloudSigma, SmartOS, Ec2, CloudStack, None
-EOF
-########## END CLOUD INIT DPKG ##########
 
 ########## BEGIN CLOUD INIT DHC COMMON ##########
 cat >> /etc/cloud/cloud.cfg.d/99_dreamcompute_common.cfg << EOF
