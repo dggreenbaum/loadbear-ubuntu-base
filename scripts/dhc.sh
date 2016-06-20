@@ -1,21 +1,13 @@
-/bin/echo "cloud-init cloud-init/datasources string ConfigDrive" | /usr/bin/debconf-set-selections
-#/usr/sbin/useradd -s /bin/bash -m dhc-user
-#echo "dhc-user ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers.d/dhc-user
-#chmod 440 /etc/sudoers.d/dhc-user
-
-# Don't wait so long for network devices to come up
-sed -i '/TimeoutStartSec/c\TimeoutStartSec=10sec' /etc/systemd/system/network-online.target.wants/networking.service
-
 /usr/bin/apt-get -y install cloud-init cloud-initramfs-rescuevol cloud-initramfs-growroot python-setuptools
-rm /etc/network/if-up.d/ntpdate
+
 rm /etc/default/grub
 cat >> /etc/default/grub << EOF
 GRUB_DEFAULT=0
 GRUB_HIDDEN_TIMEOUT=0
 GRUB_HIDDEN_TIMEOUT_QUIET=true
 GRUB_TIMEOUT=0
-GRUB_DISTRIBUTOR=Debian
-GRUB_CMDLINE_LINUX_DEFAULT="console=tty1 console=ttyS0,115200n8"
+GRUB_DISTRIBUTOR=`lsb_release -i -s 2> /dev/null || echo Debian`
+GRUB_CMDLINE_LINUX_DEFAULT="console=tty1 console=ttyS0 net.ifnames=0"
 GRUB_CMDLINE_LINUX=""
 GRUB_RECORDFAIL_TIMEOUT=0
 
@@ -24,40 +16,68 @@ GRUB_TERMINAL=console
 EOF
 
 /usr/sbin/update-grub
+
 cp /etc/cloud/templates/hosts.debian.tmpl /etc/cloud/templates/hosts.ubuntu.tmpl
+
+########## BEGIN CLOUD INIT CFG ##########
 cat > /etc/cloud/cloud.cfg << EOF
+# The top level settings are used as module
+# and system configuration.
+
+# A set of users which may be applied and/or used by various modules
+# when a 'default' entry is found it will reference the 'default_user'
+# from the distro configuration specified below
 users:
- - default
-disable_root: 1
-ssh_pwauth:   0
+   - default
 
-locale_configfile: /etc/sysconfig/i18n
-mount_default_fields: [~, ~, 'auto', 'defaults,nofail', '0', '2']
-resize_rootfs_tmp: /dev
-ssh_deletekeys:   0
-ssh_genkeytypes:  ~
-syslog_fix_perms: ~
+# If this is set, 'root' will not be able to ssh in and they
+# will get a message to login instead as the above $user (ubuntu)
+disable_root: true
 
+# This will cause the set+update hostname module to not operate (if true)
+preserve_hostname: false
+
+# Example datasource config
+# datasource:
+#    Ec2:
+#      metadata_urls: [ 'blah.com' ]
+#      timeout: 5 # (defaults to 50 seconds)
+#      max_wait: 10 # (defaults to 120 seconds)
+
+# The modules that run in the 'init' stage
 cloud_init_modules:
  - migrator
+ - ubuntu-init-switch
+ - seed_random
  - bootcmd
  - write-files
  - growpart
  - resizefs
  - set_hostname
+ - update_hostname
+ - update_etc_hosts
+ - ca-certs
  - rsyslog
  - users-groups
- - scripts-per-once
- - scripts-per-boot
- - scripts-per-instance
  - ssh
 
+# The modules that run in the 'config' stage
 cloud_config_modules:
+# Emit the cloud config ready event
+# this can be used by upstart jobs for 'start on cloud-config'.
+ - emit_upstart
+ - disk_setup
  - mounts
+ - ssh-import-id
  - locale
  - set-passwords
- - yum-add-repo
+ - snappy
+ - grub-dpkg
+ - apt-pipelining
+ - apt-configure
  - package-update-upgrade-install
+ - fan
+ - landscape
  - timezone
  - puppet
  - chef
@@ -65,9 +85,12 @@ cloud_config_modules:
  - mcollective
  - disable-ec2-metadata
  - runcmd
+ - byobu
 
+# The modules that run in the 'final' stage
 cloud_final_modules:
  - rightscale_userdata
+ - scripts-vendor
  - scripts-per-once
  - scripts-per-boot
  - scripts-per-instance
@@ -76,28 +99,134 @@ cloud_final_modules:
  - keys-to-console
  - phone-home
  - final-message
+ - power-state-change
 
+# System and/or distro specific settings
+# (not accessible to handlers/transforms)
 system_info:
-  default_user:
-    name: dhc-user
-    lock_passwd: true
-    gecos: DreamCompute User
-    groups: [adm, sudo]
-    sudo: ["ALL=(ALL) NOPASSWD:ALL"]
-    shell: /bin/bash
-  distro: ubuntu
-  paths:
-    cloud_dir: /var/lib/cloud
-    templates_dir: /etc/cloud/templates
-  ssh_svcname: ssh
+   # This will affect which distro class gets used
+   distro: ubuntu
+   # Default user name + that default users groups (if added/used)
+   default_user:
+     name: ubuntu
+     lock_passwd: True
+     gecos: Ubuntu
+     groups: [adm, audio, cdrom, dialout, dip, floppy, netdev, plugdev, sudo, video]
+     sudo: ["ALL=(ALL) NOPASSWD:ALL"]
+     shell: /bin/bash
+   # Other config here will be given to the distro class and/or path classes
+   paths:
+      cloud_dir: /var/lib/cloud/
+      templates_dir: /etc/cloud/templates/
+      upstart_dir: /etc/init/
+   package_mirrors:
+     - arches: [i386, amd64]
+       failsafe:
+         primary: http://archive.ubuntu.com/ubuntu
+         security: http://security.ubuntu.com/ubuntu
+       search:
+         primary:
+           - http://%(ec2_region)s.ec2.archive.ubuntu.com/ubuntu/
+           - http://%(availability_zone)s.clouds.archive.ubuntu.com/ubuntu/
+           - http://%(region)s.clouds.archive.ubuntu.com/ubuntu/
+         security: []
+     - arches: [armhf, armel, default]
+       failsafe:
+         primary: http://ports.ubuntu.com/ubuntu-ports
+         security: http://ports.ubuntu.com/ubuntu-ports
+   ssh_svcname: ssh
 
-# vim:syntax=yaml
 EOF
-cat >> /etc/cloud/cloud.cfg.d/15_hosts.cfg << EOF
+########## END CLOUD INIT CFG ##########
+
+########## BEGIN CLOUD INIT LOGGING ##########
+cat >> /etc/cloud/cloud.cfg.d/05_logging.cfg << EOF
+## This yaml formated config file handles setting
+## logger information.  The values that are necessary to be set
+## are seen at the bottom.  The top '_log' are only used to remove
+## redundency in a syslog and fallback-to-file case.
+##
+## The 'log_cfgs' entry defines a list of logger configs
+## Each entry in the list is tried, and the first one that
+## works is used.  If a log_cfg list entry is an array, it will
+## be joined with '\n'.
+_log:
+ - &log_base |
+   [loggers]
+   keys=root,cloudinit
+
+   [handlers]
+   keys=consoleHandler,cloudLogHandler
+
+   [formatters]
+   keys=simpleFormatter,arg0Formatter
+
+   [logger_root]
+   level=DEBUG
+   handlers=consoleHandler,cloudLogHandler
+
+   [logger_cloudinit]
+   level=DEBUG
+   qualname=cloudinit
+   handlers=
+   propagate=1
+
+   [handler_consoleHandler]
+   class=StreamHandler
+   level=WARNING
+   formatter=arg0Formatter
+   args=(sys.stderr,)
+
+   [formatter_arg0Formatter]
+   format=%(asctime)s - %(filename)s[%(levelname)s]: %(message)s
+
+   [formatter_simpleFormatter]
+   format=[CLOUDINIT] %(filename)s[%(levelname)s]: %(message)s
+ - &log_file |
+   [handler_cloudLogHandler]
+   class=FileHandler
+   level=DEBUG
+   formatter=arg0Formatter
+   args=('/var/log/cloud-init.log',)
+ - &log_syslog |
+   [handler_cloudLogHandler]
+   class=handlers.SysLogHandler
+   level=DEBUG
+   formatter=simpleFormatter
+   args=("/dev/log", handlers.SysLogHandler.LOG_USER)
+
+log_cfgs:
+# These will be joined into a string that defines the configuration
+ - [ *log_base, *log_syslog ]
+# These will be joined into a string that defines the configuration
+ - [ *log_base, *log_file ]
+# A file path can also be used
+# - /etc/log.conf
+
+# this tells cloud-init to redirect its stdout and stderr to
+# 'tee -a /var/log/cloud-init-output.log' so the user can see output
+# there without needing to look on the console.
+output: {all: '| tee -a /var/log/cloud-init-output.log'}
+
+EOF
+########## END CLOUD INIT LOGGING ##########
+
+########## BEGIN CLOUD INIT DPKG ##########
+cat >> /etc/cloud/cloud.cfg.d/90_dpkg.cfg << EOF
+# to update this file, run dpkg-reconfigure cloud-init
+datasource_list: [ NoCloud, ConfigDrive, OpenNebula, Azure, AltCloud, OVF, MAAS, GCE, OpenStack, CloudSigma, SmartOS, Ec2, CloudStack, None
+EOF
+########## END CLOUD INIT DPKG ##########
+
+########## BEGIN CLOUD INIT DHC COMMON ##########
+cat >> /etc/cloud/cloud.cfg.d/99_dreamcompute_common.cfg << EOF
+# Configuration for DreamCompute.
 manage_etc_hosts: template
-EOF
-cat >> /etc/cloud/cloud.cfg.d/25_dhc.cfg << EOF
-datasource_list: [ 'ConfigDrive', 'Ec2' ]
+datasource_list: [ ConfigDrive ]
+
+disable_root: 1
+ssh_pwauth: 0
+
 datasource:
   ConfigDrive:
       dsmode: local
@@ -107,22 +236,41 @@ growpart:
   devices: ['/']
 
 resize_rootfs: True
+locale_configfile: /etc/sysconfig/i18n
+mount_default_fields: [~, ~, 'auto', 'defaults,nofail', '0', '2']
+
+resize_rootfs_tmp: /dev
+
+system_info:
+   default_user:
+     name: dhc-user
+     lock_passwd: True
+     gecos: DreamCompute User
+     groups: [adm, audio, cdrom, dialout, dip, floppy, netdev, plugdev, sudo, video]
+     sudo: ["ALL=(ALL) NOPASSWD:ALL"]
+     shell: /bin/bash
+   distro: ubuntu
+   package_mirrors:
+     - arches: [i386, amd64]
+       failsafe:
+         primary: http://archive.ubuntu.com/ubuntu
+         security: http://security.ubuntu.com/ubuntu
+       search:
+         primary:
+           - http://mirrors.dreamcompute.com/ubuntu/
+           - http://%(availability_zone)s.dreamcompute.archive.ubuntu.com/ubuntu/
+           - http://dreamcompute.archive.ubuntu.com/ubuntu/
+         security: []
+     - arches: [armhf, armel, default]
+       failsafe:
+         primary: http://ports.ubuntu.com/ubuntu-ports
+         security: http://ports.ubuntu.com/ubuntu-ports
 
 EOF
-cat >> /etc/cloud/cloud.cfg.d/99_cleanup.cfg << EOF
-
-runcmd:
- - [ /bin/sed, -i, '/\/tmp\/.*. vfat .*./d', /etc/mtab ]
- - [ /bin/rm, -f, /etc/cloud/cloud.cfg.d/99_cleanup.cfg]
-
-EOF
+########## END CLOUD INIT DHC COMMON ##########
 
 cat >> /etc/resolvconf/resolv.conf.d/base << EOF
 nameserver 8.8.8.8
 nameserver 8.8.4.4
 search nodes.dreamcompute.net
 EOF
-
-## Explicitly mounting the config drive seems to work around a bug in mountall
-#mkdir /mnt/config-2
-#echo '/dev/sr0 /mnt/config-2 iso9660 defaults 0 0' >> /etc/fstab
