@@ -22,6 +22,9 @@ cp /etc/cloud/templates/hosts.debian.tmpl /etc/cloud/templates/hosts.ubuntu.tmpl
 # Reduce DHCP timeout
 sed -i '/timeout 300;/c\timeout 10;' /etc/dhcp/dhclient.conf
 
+# Don't wait so long for network devices to come up
+sed -i '/TimeoutStartSec/c\TimeoutStartSec=10sec' /etc/systemd/system/network-online.target.wants/networking.service
+
 ########## BEGIN CLOUD INIT CFG ##########
 cat > /etc/cloud/cloud.cfg << EOF
 # The top level settings are used as module
