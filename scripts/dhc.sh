@@ -142,7 +142,7 @@ EOF
 ########## END CLOUD INIT CFG ##########
 
 ########## BEGIN CLOUD INIT LOGGING ##########
-cat >> /etc/cloud/cloud.cfg.d/05_logging.cfg << EOF
+cat > /etc/cloud/cloud.cfg.d/05_logging.cfg << EOF
 ## This yaml formated config file handles setting
 ## logger information.  The values that are necessary to be set
 ## are seen at the bottom.  The top '_log' are only used to remove
